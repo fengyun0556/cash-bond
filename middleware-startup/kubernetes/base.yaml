@@ -1,0 +1,346 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-config
+data:
+  init.sql: |
+    CREATE DATABASE "trade-link";
+    CREATE DATABASE "tps2";
+
+    GRANT ALL PRIVILEGES ON DATABASE "trade-link" TO admin;
+    GRANT ALL PRIVILEGES ON DATABASE tps2 TO admin;
+
+    -- 连接到 trade-link 数据库创建表
+    \connect "trade-link";
+
+    CREATE TABLE order_detail (
+        order_id BIGSERIAL PRIMARY KEY,
+        account_key VARCHAR(50),
+        account_name VARCHAR(100),
+        member_key VARCHAR(50),
+        member_name VARCHAR(100),
+        cash_account VARCHAR(50),
+        isin VARCHAR(12),
+        isin_name VARCHAR(100),
+        exchange_code VARCHAR(10),
+        order_type VARCHAR(20),
+        quantity INT,
+        total_executed_quantity INT,
+        price DECIMAL(20, 4),
+        order_request_mode VARCHAR(20),
+        tps2_id BIGINT,
+        order_state VARCHAR(20),
+        create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE rule_check_detail (
+        id BIGSERIAL PRIMARY KEY,
+        rule_id VARCHAR(50),
+        order_id BIGINT NOT NULL,
+        rule_check_result VARCHAR(20),
+        rule_describe VARCHAR(500),
+        create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE order_execution_detail (
+        execution_id BIGSERIAL PRIMARY KEY,
+        bbg_execution_id VARCHAR(255),
+        trade_link_id BIGINT,
+        executed_quantity INTEGER,
+        executed_price NUMERIC(20, 4),
+        create_time TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+        update_time TIMESTAMP WITHOUT TIME ZONE
+    );
+
+    -- 连接到 tps2 数据库创建表
+    \connect tps2;
+
+    CREATE TABLE tps2_order_detail (
+        tps2_id BIGSERIAL PRIMARY KEY,
+        trade_link_id BIGINT,
+        account_key VARCHAR(50),
+        account_name VARCHAR(100),
+        member_key VARCHAR(50),
+        member_name VARCHAR(100),
+        cash_account VARCHAR(50),
+        isin VARCHAR(12),
+        isin_name VARCHAR(100),
+        order_state VARCHAR(255),
+        exchange_code VARCHAR(10),
+        order_type VARCHAR(20),
+        quantity INTEGER NOT NULL,
+        price DECIMAL(20,4),
+        create_time TIMESTAMP,
+        update_time TIMESTAMP
+    );
+
+    CREATE TABLE bbg_execution_detail (
+        bbg_execution_id BIGSERIAL PRIMARY KEY,
+        bbg_message_id VARCHAR(255),
+        trade_link_id BIGINT,
+        account_key VARCHAR(255),
+        executed_quantity INTEGER,
+        executed_price DECIMAL(19, 2),
+        create_time TIMESTAMP,
+        update_time TIMESTAMP
+    );
+
+    CREATE TABLE ptb_detail (
+        ptb_id BIGSERIAL PRIMARY KEY,
+        bbg_execution_id BIGINT,
+        account_key VARCHAR(50),
+        account_name VARCHAR(100),
+        member_key VARCHAR(50),
+        member_name VARCHAR(100),
+        cash_account VARCHAR(50),
+        isin VARCHAR(12),
+        executed_quantity INTEGER,
+        executed_price DECIMAL,
+        settlement_id BIGINT,
+        create_time TIMESTAMP,
+        update_time TIMESTAMP
+    );
+
+---
+# 添加 PersistentVolume
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: postgres-pv
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-storage
+  hostPath:
+    path: /data/postgres-data
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: local-storage
+  volumeName: postgres-pv
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+      containers:
+      - name: postgres
+        image: postgres:17.6
+        env:
+        - name: POSTGRES_USER
+          value: admin
+        - name: POSTGRES_PASSWORD
+          value: password123
+        - name: POSTGRES_DB
+          value: postgres
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        - name: init-script
+          mountPath: /docker-entrypoint-initdb.d/
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+      - name: init-script
+        configMap:
+          name: postgres-init-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+spec:
+  selector:
+    app: postgres
+  ports:
+    - protocol: TCP
+      port: 5432
+      targetPort: 5432
+  type: ClusterIP
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rocketmq-nameserver
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rocketmq-nameserver
+  template:
+    metadata:
+      labels:
+        app: rocketmq-nameserver
+    spec:
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+      containers:
+      - name: nameserver
+        image: apache/rocketmq:5.3.3
+        command: ["sh"]
+        args: ["-c", "cd /home/rocketmq/rocketmq-5.3.3/bin && export JAVA_OPT=\"-Duser.home=/home/rocketmq\" && sh mqnamesrv"]
+        ports:
+        - containerPort: 9876
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rocketmq-nameserver
+  namespace: default
+spec:
+  selector:
+    app: rocketmq-nameserver
+  ports:
+    - protocol: TCP
+      port: 9876
+      targetPort: 9876
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rocketmq-broker-config
+  namespace: default
+data:
+  broker.conf: |
+    brokerClusterName = DefaultCluster
+    brokerName = broker-a
+    brokerId = 0
+    deleteWhen = 04
+    fileReservedTime = 48
+    brokerRole = ASYNC_MASTER
+    flushDiskType = ASYNC_FLUSH
+    # 关键配置：通过K8S Service名连接NameServer
+    namesrvAddr = rocketmq-nameserver:9876
+    # 允许自动创建Topic，方便测试
+    autoCreateTopicEnable = true
+    # Broker对外暴露的地址配置，让客户端能够连接
+    # 这里设置为K8S Service名
+    brokerIP1 = rocketmq-broker
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rocketmq-broker
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rocketmq-broker
+  template:
+    metadata:
+      labels:
+        app: rocketmq-broker
+    spec:
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+      # 需要与NameServer通信，所以需要在一个命名空间
+      containers:
+      - name: broker
+        image: apache/rocketmq:5.3.3
+        command: ["sh"]
+        args: ["-c", "cd /home/rocketmq/rocketmq-5.3.3/bin && export JAVA_OPT=\"-Duser.home=/home/rocketmq -Drocketmq.namesrv.addr=rocketmq-nameserver:9876 -Drocketmq.broker.config=/home/rocketmq/rocketmq-5.3.3/conf/broker.conf\" && sh mqbroker -c /home/rocketmq/rocketmq-5.3.3/conf/broker.conf"]
+        ports:
+        - containerPort: 10909
+        - containerPort: 10911
+        - containerPort: 10912
+        env:
+        - name: JAVA_OPT
+          value: "-Duser.home=/home/rocketmq -Xms4g -Xmx4g -Xmn2g"
+        resources:
+          requests:
+            memory: "6Gi"
+            cpu: "1000m"
+          limits:
+            memory: "8Gi"
+            cpu: "2000m"
+        volumeMounts:
+        - name: broker-storage
+          mountPath: /home/rocketmq/store
+        - name: config-volume
+          mountPath: /home/rocketmq/rocketmq-5.3.3/conf/broker.conf
+          subPath: broker.conf
+      volumes:
+      - name: broker-storage
+        emptyDir: {} # 使用临时存储，学习测试用
+      - name: config-volume
+        configMap:
+          name: rocketmq-broker-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rocketmq-broker
+  namespace: default
+spec:
+  selector:
+    app: rocketmq-broker
+  ports:
+    - name: broker-1
+      protocol: TCP
+      port: 10909
+      targetPort: 10909
+    - name: broker-2
+      protocol: TCP
+      port: 10911
+      targetPort: 10911
+    - name: broker-3
+      protocol: TCP
+      port: 10912
+      targetPort: 10912

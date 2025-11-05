@@ -1,0 +1,4 @@
+tcp:
+  client:
+    host: localhost
+    port: 8085

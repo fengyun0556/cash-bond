@@ -1,0 +1,17 @@
+spring:
+  application:
+    name: Notification-Service
+  producer:
+    group: notification-producer-group
+  consumer:
+    group: notification-consumer-group
+    pull-batch-size: 10
+server:
+  port: 8081
+logging:
+  level:
+    org.apache.rocketmq: DEBUG
+    com.cpb: DEBUG
+  file:
+    name: /app/logs/application.log
+    path: ./logs

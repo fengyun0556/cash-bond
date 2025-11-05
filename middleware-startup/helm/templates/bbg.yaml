@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bbg  # Deployment 的名称
+spec:
+  replicas: 1  # 初始副本数量，根据需要修改
+  selector:
+    matchLabels:
+      app: bbg  # 这个标签必须和下面的 template.metadata.labels 匹配
+  template:
+    metadata:
+      labels:
+        app: bbg  # Pod 的标签，Service 会根据这个来选择 Pod
+    spec:
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+      initContainers:
+      - name: wait-for-fix-engine
+        image: busybox
+        command: ['sh', '-c', 'until nc -z fix-engine 80; do echo "Waiting for fix-engine..."; sleep 2; done;']
+      containers:
+      - name: bbg  # 容器的名称
+        image: shenyun2025/bbg:{{ .Values.image.tag.bbg }}  # 你的 Docker Hub 镜像地址
+        ports:
+        - containerPort: 8087
+        # 健康检查探针配置
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8087
+          initialDelaySeconds: 0
+          periodSeconds: 3
+          failureThreshold: 5
+          timeoutSeconds: 2
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8087
+          initialDelaySeconds: 0
+          periodSeconds: 3
+          failureThreshold: 5
+          timeoutSeconds: 2
+        startupProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8087
+          initialDelaySeconds: 30
+          failureThreshold: 3
+          periodSeconds: 5
+          timeoutSeconds: 3
+        env:
+        - name: SPRING_PROFILES_ACTIVE  # 设置环境变量
+          value: {{ .Values.env}}
+        # 以下资源配置可以根据需要添加或删除
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bbg-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: bbg
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: fix-engine
+    ports:
+    - protocol: TCP
+      port: 8089
+  - from:
+    - ipBlock:
+        cidr: 192.168.0.0/16
+    ports:
+    - protocol: TCP
+      port: 8087
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: fix-engine
+    ports:
+    - protocol: TCP
+      port: 80
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53

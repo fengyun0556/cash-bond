@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: bbg
+server:
+  port: 8087
+tcp:
+  client:
+    reconnect-delay: 5
+    local-port: 8089
+logging:
+  file:
+    name: /app/logs/application.log
+    path: ./logs

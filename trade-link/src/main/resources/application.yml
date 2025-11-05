@@ -1,0 +1,13 @@
+server:
+  port: 8082
+rocketmq:
+  producer:
+    group: trade-link-producer-group
+  consumer:
+    group: trade-link-consumer-group
+    pull-batch-size: 10
+spring:
+  application:
+    name: trade-link
+  datasource:
+    driver-class-name: com.mysql.jdbc.Driver

@@ -1,0 +1,19 @@
+services:
+  rocketmq:
+    image: ochh/rocketmq
+    container_name: "rocketmq"
+    restart: always
+    hostname: alpine
+    ports:
+      - 8091:8080
+      - 9876:9876
+      - 10909-10912:10909-10912
+    volumes:
+      - "rocketmq_data:/home/app/data"
+      - "/etc/localtime:/etc/localtime:ro"
+    environment:
+      HOST_IP: 192.168.5.19
+
+volumes:
+  rocketmq_data:
+    name: rocketmq_data

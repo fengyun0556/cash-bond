@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: settlement-service  # Deployment 的名称
+spec:
+  replicas: 1  # 初始副本数量，根据需要修改
+  selector:
+    matchLabels:
+      app: settlement-service  # 这个标签必须和下面的 template.metadata.labels 匹配
+  template:
+    metadata:
+      labels:
+        app: settlement-service  # Pod 的标签，Service 会根据这个来选择 Pod
+    spec:
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+      containers:
+      - name: settlement-service  # 容器的名称
+        image: shenyun2025/settlement-service:0.0.5  # 你的 Docker Hub 镜像地址
+        ports:
+        - containerPort: 8084  # 你的应用在容器内监听的端口号（根据你的实际情况修改！）
+        # 健康检查探针配置
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8084
+          initialDelaySeconds: 0
+          periodSeconds: 3
+          failureThreshold: 5
+          timeoutSeconds: 2
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8084
+          initialDelaySeconds: 0
+          periodSeconds: 3
+          failureThreshold: 5
+          timeoutSeconds: 2
+        startupProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8084
+          initialDelaySeconds: 30
+          failureThreshold: 3
+          periodSeconds: 5
+          timeoutSeconds: 3
+        # 以下资源配置可以根据需要添加或删除
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: settlement-service  # Service 的名称
+spec:
+  selector:
+    app: settlement-service  # 这个标签必须和 Deployment 中的 Pod 标签匹配，用于寻找要代理的 Pod
+  ports:
+    - protocol: TCP
+      port: 80          # Service 对外暴露的端口
+      targetPort: 8084  # 请求转发到 Pod 的端口（必须与 Deployment 中的 containerPort 一致）
+  type: ClusterIP       # 默认类型，只能在集群内部访问
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: settlement-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: settlement-service
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          run: test-curl  # 根据您的实际标签调整
+    ports:
+    - protocol: TCP
+      port: 8084
+  - from:
+    - ipBlock:
+        cidr: 172.30.0.0/16
+    ports:
+    - protocol: TCP
+      port: 8084
+  egress:
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53

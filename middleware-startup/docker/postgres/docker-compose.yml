@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:17.6
+    container_name: postgres17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_Password
+      POSTGRES_DB: postgresDB
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+    networks:
+      - postgres-network
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin
+    environment:
+      # pgAdmin 登录账号
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      # pgAdmin 登录密码
+      PGADMIN_DEFAULT_PASSWORD: admin_password
+    ports:
+      # 访问端口：宿主机 5050 映射到容器 80
+      - "5050:80"
+    volumes:
+      # 持久化 pgAdmin 配置
+      - pgadmin_data:/var/lib/pgadmin
+    # 依赖 postgres 服务，确保 postgres 先启动
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    networks:
+      - postgres-network
+
+volumes:
+  postgres_data:
+  pgadmin_data:
+
+networks:
+  postgres-network:
+    driver: bridge

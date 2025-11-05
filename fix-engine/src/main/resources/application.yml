@@ -1,0 +1,18 @@
+spring:
+  application:
+    name: fix-engine
+rocketmq:
+  producer:
+    group: fix-engine-consumer-group
+  consumer:
+    group: fix-engine-consumer-group
+    pull-batch-size: 10
+server:
+  port: 8086
+tcp:
+  server:
+    port: 8085
+logging:
+  file:
+    name: /app/logs/application.log
+    path: ./logs

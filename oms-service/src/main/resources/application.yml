@@ -1,0 +1,15 @@
+server:
+  port: 8083
+  servlet:
+    context-path: /oms-service
+rocketmq:
+  producer:
+    group: oms-producer-group
+  consumer:
+    group: oms-consumer-group
+#    pull-batch-size: 10
+spring:
+  application:
+    name: oms-service
+  datasource:
+    driver-class-name: com.mysql.jdbc.Driver #org.postgresql.Driver

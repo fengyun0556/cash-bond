@@ -1,0 +1,9 @@
+env: prod
+image:
+  tag:
+    bbg: 0.0.3
+    trade-link: 0.0.2
+    fix-engine: 0.0.4
+    notification-service: 0.0.3
+    oms: 0.0.3
+    settlement-service: 0.0.4

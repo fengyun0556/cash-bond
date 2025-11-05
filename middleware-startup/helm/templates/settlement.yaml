@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: settlement-service  # Deployment 的名称
+spec:
+  replicas: 1  # 初始副本数量，根据需要修改
+  selector:
+    matchLabels:
+      app: settlement-service  # 这个标签必须和下面的 template.metadata.labels 匹配
+  template:
+    metadata:
+      labels:
+        app: settlement-service  # Pod 的标签，Service 会根据这个来选择 Pod
+        deployment-group: order-system
+    spec:
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+      # 添加亲和性配置
+      affinity:
+        podAffinity:
+          # 使用 preferredDuringScheduling 软策略，尽量满足，不强制
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100 # 权重，表示优先级很高
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: deployment-group # 寻找带有这个标签的Pod
+                  operator: In
+                  values:
+                  - order-system        # 标签的值
+              # 拓扑域为节点级别，确保在同一个Node上
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: settlement-service  # 容器的名称
+        image: shenyun2025/settlement-service:{{ .Values.image.tag.settlement_service }}  # 你的 Docker Hub 镜像地址
+        ports:
+        - containerPort: 8084  # 你的应用在容器内监听的端口号（根据你的实际情况修改！）
+        # 以下资源配置可以根据需要添加或删除
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: settlement-service  # Service 的名称
+spec:
+  selector:
+    app: settlement-service  # 这个标签必须和 Deployment 中的 Pod 标签匹配，用于寻找要代理的 Pod
+  ports:
+    - protocol: TCP
+      port: 80          # Service 对外暴露的端口
+      targetPort: 8084  # 请求转发到 Pod 的端口（必须与 Deployment 中的 containerPort 一致）
+  type: ClusterIP       # 默认类型，只能在集群内部访问

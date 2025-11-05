@@ -1,0 +1,9 @@
+spring:
+  datasource:
+    url: jdbc:mysql://mysql-service:3306/tps2?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true
+    username: admin
+    password: ${SPRING_DATASOURCE_PASSWORD}
+rocketmq:
+  name-server: rocketmq-nameserver:9876
+settlement:
+  host: http://settlement-service
