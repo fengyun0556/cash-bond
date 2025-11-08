@@ -11,4 +11,5 @@ public class SettlementResponse implements Serializable {
     private static final long serialVersionUID = 1339079683759862048L;
     private Boolean success;
     private Long settlementId;
+    private String failedReason;
 }

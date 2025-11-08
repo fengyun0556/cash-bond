@@ -1,0 +1,5 @@
+package com.cpb.oms.domain.enums;
+
+public enum SettlementState {
+    WAITING_FOR_SETTLEMENT, WAITING_FOR_ENRICHMENT, WAITING_FOR_AMEND, SETTLEMENT_FAILED, SETTLEMENT_SUCCESS
+}
