@@ -67,12 +67,16 @@ public class SettlementInteract {
     }
 
     public void enrich(OrderEnrichedEvent orderEnrichedEvent) {
+        if (orderEnrichedEvent == null) return;
+
         this.tradeLinkId = orderEnrichedEvent.getOrderId();
         this.cashAccount = orderEnrichedEvent.getCashAccount();
         this.isin = orderEnrichedEvent.getIsin();
     }
 
     public void amend(OrderAmendedEvent orderAmendedEvent) {
+        if (orderAmendedEvent == null) return;
+
         this.tradeLinkId = orderAmendedEvent.getOrderId();
         this.cashAccount = orderAmendedEvent.getCashAccount();
         this.isin = orderAmendedEvent.getIsin();
