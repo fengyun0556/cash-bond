@@ -12,12 +12,14 @@ import com.cpb.oms.domain.service.SettlementIntegrationService;
 import com.cpb.oms.domain.service.SettlementInteractService;
 import com.cpb.oms.interfaces.executed.ExecutionConfirmedRequest;
 import io.micrometer.common.util.StringUtils;
+import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
 @Slf4j
+@Transactional
 public class ExecutionApplicationService {
 
     @Autowired
@@ -34,46 +36,99 @@ public class ExecutionApplicationService {
     private SettlementIntegrationService settlementIntegrationService;
 
     public void executed(BBGExecutionMessage bbgExecutionMessage) {
-        BBGExecution bbgExecution = bbgExecutionBuilder.buildBBGExecution(bbgExecutionMessage);
-        bbgExecution.init();
+        log.info("开始处理BBG执行消息, BbgMessageId: {}, UniqueId: {}",
+                bbgExecutionMessage.getBbgMessageId(), bbgExecutionMessage.getUniqueId());
 
-        //save DB
-        executedRepository.save(bbgExecution);
+        try {
+            BBGExecution bbgExecution = bbgExecutionBuilder.buildBBGExecution(bbgExecutionMessage);
+            log.info("BBGExecution构建完成, BbgMessageId: {}", bbgExecutionMessage.getBbgMessageId());
+
+            bbgExecution.init();
+            log.info("BBGExecution初始化完成, BbgMessageId: {}, UniqueId: {}",
+                    bbgExecutionMessage.getBbgMessageId(), bbgExecutionMessage.getUniqueId());
+
+            //保存到数据库
+            executedRepository.save(bbgExecution);
+            log.info("BBGExecution保存完成, BbgMessageId: {}, UniqueId: {}, Tps2ExecutionId: {}",
+                    bbgExecutionMessage.getBbgMessageId(), bbgExecutionMessage.getUniqueId(), bbgExecution.getTps2ExecutionId());
+
+        } catch (Exception e) {
+            log.error("处理BBG执行消息失败, BbgMessageId: {}, UniqueId: {}, 错误信息: {}",
+                    bbgExecutionMessage.getBbgMessageId(), bbgExecutionMessage.getUniqueId(), e.getMessage(), e);
+            throw e;
+        }
     }
 
     public void confirmed(ExecutionConfirmedRequest executionConfirmedRequest) {
-        BBGExecution bbgExecution = executedRepository.get(executionConfirmedRequest.getTps2ExecutionId());
+        log.info("开始确认执行, Tps2ExecutionId: {}", executionConfirmedRequest.getTps2ExecutionId());
 
-        bbgExecution.confirmed();
-        executedRepository.save(bbgExecution);
+        try {
+            BBGExecution bbgExecution = executedRepository.get(executionConfirmedRequest.getTps2ExecutionId());
+            if (bbgExecution == null) {
+                log.error("未找到对应的BBG执行记录, Tps2ExecutionId: {}", executionConfirmedRequest.getTps2ExecutionId());
+                throw new RuntimeException("BBGExecution not found for Tps2ExecutionId: " + executionConfirmedRequest.getTps2ExecutionId());
+            }
+            log.info("找到BBG执行记录, Tps2ExecutionId: {}", bbgExecution.getTps2ExecutionId());
 
-        //send to TL
-        TradeExecutedEvent tradeExecutedEvent = bbgExecution.createTradeExecutedEvent();
-        messageSender.send(tradeExecutedEvent);
+            bbgExecution.confirmed();
+            executedRepository.save(bbgExecution);
+            log.info("执行确认状态更新并保存完成, Tps2ExecutionId: {}", executionConfirmedRequest.getTps2ExecutionId());
 
-        if (StringUtils.isNotEmpty(bbgExecution.getCashAccount())) {
+            //发送到TL
+            TradeExecutedEvent tradeExecutedEvent = bbgExecution.createTradeExecutedEvent();
+            messageSender.send(tradeExecutedEvent);
+            log.info("交易执行事件已发送, Tps2ExecutionId: {}", executionConfirmedRequest.getTps2ExecutionId());
 
-            //build SettlementInteract
-            SettlementInteract settlementInteract = settlementInteractService.buildSettlementInteract(bbgExecution);
-            settlementInteract.init();
+            if (StringUtils.isNotEmpty(bbgExecution.getCashAccount())) {
+                log.info("处理LIVE订单结算, Tps2ExecutionId: {}, CashAccount: {}",
+                        executionConfirmedRequest.getTps2ExecutionId(), bbgExecution.getCashAccount());
 
-            //save DB
-            settlementInteractRepository.save(settlementInteract);
+                //构建结算交互记录
+                SettlementInteract settlementInteract = settlementInteractService.buildSettlementInteract(bbgExecution);
+                settlementInteract.init();
+                log.info("结算交互记录初始化完成, SettlementInteractId: {}", settlementInteract.getId());
 
-            //call settlement
-            SettlementResult settlementResult = settlementIntegrationService.settlement(settlementInteract);
+                //保存到数据库
+                settlementInteractRepository.save(settlementInteract);
+                log.info("结算交互记录保存完成, SettlementInteractId: {}, Tps2ExecutionId: {}",
+                        settlementInteract.getId(), settlementInteract.getTps2ExecutionId());
 
-            //save settlement result
-            settlementInteract.saveSettlementResult(settlementResult);
+                //调用结算服务
+                log.info("开始调用结算服务, SettlementInteractId: {}", settlementInteract.getId());
+                SettlementResult settlementResult = settlementIntegrationService.settlement(settlementInteract);
+                log.info("结算服务调用完成, SettlementInteractId: {}, Success: {}, Message: {}",
+                        settlementInteract.getId(), settlementResult.getSuccess(), settlementResult.getFailedReason());
 
-            //update DB
-            settlementInteractRepository.save(settlementInteract);
-        } else {
-            log.info("phone order");
+                //保存结算结果
+                settlementInteract.saveSettlementResult(settlementResult);
+                log.info("结算结果已保存到交互记录, SettlementInteractId: {}", settlementInteract.getId());
+
+                //更新数据库
+                settlementInteractRepository.save(settlementInteract);
+                log.info("结算交互记录更新完成, SettlementInteractId: {}", settlementInteract.getId());
+
+            } else {
+                log.info("处理PHONE订单, 跳过结算流程, Tps2ExecutionId: {}", executionConfirmedRequest.getTps2ExecutionId());
+            }
+
+            log.info("执行确认流程完成, Tps2ExecutionId: {}", executionConfirmedRequest.getTps2ExecutionId());
+
+        } catch (Exception e) {
+            log.error("执行确认流程失败, Tps2ExecutionId: {}, 错误信息: {}",
+                    executionConfirmedRequest.getTps2ExecutionId(), e.getMessage(), e);
+            throw e;
         }
     }
 
     public BBGExecution get(Long tps2ExecutionId) {
-        return executedRepository.get(tps2ExecutionId);
+        log.info("查询BBG执行记录, Tps2ExecutionId: {}", tps2ExecutionId);
+        BBGExecution bbgExecution = executedRepository.get(tps2ExecutionId);
+        if (bbgExecution == null) {
+            log.warn("未找到BBG执行记录, Tps2ExecutionId: {}", tps2ExecutionId);
+        } else {
+            log.info("BBG执行记录查询完成, Tps2ExecutionId: {}",
+                    tps2ExecutionId);
+        }
+        return bbgExecution;
     }
 }

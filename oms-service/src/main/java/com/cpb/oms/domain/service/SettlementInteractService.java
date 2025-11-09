@@ -16,6 +16,7 @@ public class SettlementInteractService {
     private TradingInstructionRepository tradingInstructionRepository;
 
     public SettlementInteract buildSettlementInteract(BBGExecution bbgExecution) {
+        log.info("build SettlementInteract start, Tps2ExecutionId: {}", bbgExecution.getTps2ExecutionId());
         TradingInstruction tradingInstruction = tradingInstructionRepository
                 .getTradingInstructionByTradeLinkId(bbgExecution.getTradeLinkId());
 
@@ -26,7 +27,7 @@ public class SettlementInteractService {
         settlementInteract.setIsin(bbgExecution.getISIN());
         settlementInteract.setExecutedQuantity(bbgExecution.getExecutedQuantity());
         settlementInteract.setExecutedPrice(bbgExecution.getExecutedPrice());
-
+        log.info("build SettlementInteract end, Tps2ExecutionId: {}", bbgExecution.getTps2ExecutionId());
         return settlementInteract;
     }
 }

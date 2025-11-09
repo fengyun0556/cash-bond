@@ -20,17 +20,20 @@ public class RocketMQPublisher implements MessageSender {
     public void send(TradeSubmissionEvent tradeSubmissionEvent) {
         log.info("send BBG Order Creation Message: {}", JSONObject.toJSONString(tradeSubmissionEvent));
         rocketMQTemplate.convertAndSend("BBG_ORDER_CREATION_TOPIC", tradeSubmissionEvent);
+        log.info("send TradeSubmissionEvent finish");
     }
 
     @Override
     public void send(TradeExecutedEvent tradeExecutedEvent) {
         log.info("send BBG Executed Message: {}", JSONObject.toJSONString(tradeExecutedEvent));
         rocketMQTemplate.convertAndSend("BBG_ORDER_EXECUTED_TOPIC", tradeExecutedEvent);
+        log.info("send TradeExecutedEvent finish");
     }
 
     @Override
     public void send(SettlementFailedEvent settlementFailedEvent) {
         log.info("send settlement failed Message: {}", JSONObject.toJSONString(settlementFailedEvent));
         rocketMQTemplate.convertAndSend("SETTLEMENT_FAILED_TOPIC", settlementFailedEvent);
+        log.info("send SettlementFailedEvent finish");
     }
 }

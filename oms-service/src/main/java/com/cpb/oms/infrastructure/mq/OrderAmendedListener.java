@@ -1,5 +1,6 @@
 package com.cpb.oms.infrastructure.mq;
 
+import com.alibaba.fastjson2.JSONObject;
 import com.cpb.oms.application.service.SettlementApplicationService;
 import com.cpb.oms.domain.event.OrderAmendedEvent;
 import lombok.extern.slf4j.Slf4j;
@@ -18,6 +19,8 @@ public class OrderAmendedListener implements RocketMQListener<OrderAmendedEvent>
 
     @Override
     public void onMessage(OrderAmendedEvent orderAmendedEvent) {
+        log.info("order amended 收到消息：{}", JSONObject.toJSONString(orderAmendedEvent));
         settlementApplicationService.handle(orderAmendedEvent);
+        log.info("order amended end, {}", orderAmendedEvent.getOrderId());
     }
 }

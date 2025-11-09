@@ -1,5 +1,6 @@
 package com.cpb.oms.infrastructure.mq;
 
+import com.alibaba.fastjson2.JSONObject;
 import com.cpb.oms.application.service.SettlementApplicationService;
 import com.cpb.oms.domain.event.OrderEnrichedEvent;
 import lombok.extern.slf4j.Slf4j;
@@ -18,6 +19,8 @@ public class OrderEnrichedListener implements RocketMQListener<OrderEnrichedEven
 
     @Override
     public void onMessage(OrderEnrichedEvent orderEnrichedEvent) {
+        log.info("order enriched 收到消息：{}", JSONObject.toJSONString(orderEnrichedEvent));
         settlementApplicationService.handle(orderEnrichedEvent);
+        log.info("order enriched end, {}", orderEnrichedEvent.getOrderId());
     }
 }

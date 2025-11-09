@@ -14,6 +14,7 @@ import com.cpb.tradelink.interfaces.rest.request.OrderAmendRequest;
 import com.cpb.tradelink.interfaces.rest.request.OrderApproveRequest;
 import com.cpb.tradelink.interfaces.rest.request.OrderCreationRequest;
 import com.cpb.tradelink.interfaces.rest.request.OrderEnrichRequest;
+import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -24,6 +25,7 @@ import java.util.List;
 
 @Service
 @Slf4j
+@Transactional
 public class OrderLifecycleAppService {
 
     @Autowired
@@ -39,128 +41,260 @@ public class OrderLifecycleAppService {
     @Autowired
     private EmailService emailService;
 
-    public Order createOrder(OrderCreationRequest orderCreationRequest/*应该使用Command，简单场景直接用接口层的request了*/) {
-        //1. get domain model
-        Order order = orderBuilder.buildFromOrderCreationRequest(orderCreationRequest);
+    public Order createOrder(OrderCreationRequest orderCreationRequest) {
+        log.info("开始创建订单, requestMode={}", orderCreationRequest.getOrderRequestMode());
 
-        //2. calculate commission
-        order.calculateCommission();
+        try {
+            //1. get domain model
+            log.debug("构建订单领域模型");
+            Order order = orderBuilder.buildFromOrderCreationRequest(orderCreationRequest);
+            log.debug("订单领域模型构建完成, orderId={}", order.getOrderId());
 
-        //3. save order and ruleCheck
-        order.initForNew();
-        orderRepository.save(order);
+            //2. calculate commission
+            log.debug("计算佣金");
+            order.calculateCommission();
+            log.debug("佣金计算完成, orderId={}", order.getOrderId());
 
-        if (OrderRequestMode.LIVE.equals(order.getOrderRequestMode())) {
-            //4. call OMS
-            OmsSubmissionResult omsSubmissionResult = omsIntegrationService.submitToOms(order);
+            //3. save order and ruleCheck
+            order.initForNew();
+            orderRepository.save(order);
+            log.info("订单初始化并保存完成, orderId={}, status={}", order.getOrderId(), order.getOrderState());
 
-            //5. save OmsSubmissionResult
-            orderService.saveOmsSubmissionResult(order, omsSubmissionResult);
-        } else if (OrderRequestMode.MEMO.equals(order.getOrderRequestMode())) {
-            MEMOOrderCreatedEvent memoOrderCreatedEvent = order.createMEMOOrderCreatedEvent();
-            messageSender.send(memoOrderCreatedEvent);
+            if (OrderRequestMode.LIVE.equals(order.getOrderRequestMode())) {
+                log.info("处理LIVE模式订单, 开始提交到OMS, orderId={}", order.getOrderId());
+                //4. call OMS
+                OmsSubmissionResult omsSubmissionResult = omsIntegrationService.submitToOms(order);
+                log.info("OMS提交完成, orderId={}, success={}, tps2Id={}",
+                        order.getOrderId(), omsSubmissionResult.getSuccess(), omsSubmissionResult.getTps2Id());
+
+                //5. save OmsSubmissionResult
+                orderService.saveOmsSubmissionResult(order, omsSubmissionResult);
+                log.info("LIVE模式订单创建完成, orderId={}", order.getOrderId());
+
+            } else if (OrderRequestMode.MEMO.equals(order.getOrderRequestMode())) {
+                log.info("处理MEMO模式订单, 发送MEMO订单创建事件, orderId={}", order.getOrderId());
+                MEMOOrderCreatedEvent memoOrderCreatedEvent = order.createMEMOOrderCreatedEvent();
+                messageSender.send(memoOrderCreatedEvent);
+                log.info("MEMO模式订单创建完成, orderId={}", order.getOrderId());
+            }
+
+            log.info("订单创建流程完成, orderId={}", order.getOrderId());
+            return order;
+
+        } catch (Exception e) {
+            log.error("创建订单失败, 错误信息: {}", e.getMessage(), e);
+            throw e;
         }
-
-        return order;
     }
 
     public void enrichOrder(OrderEnrichRequest orderEnrichRequest) {
-        Order order = orderRepository.findById(orderEnrichRequest.getOrderId(), false, false);
+        log.info("开始 enrichment 订单, orderId={}", orderEnrichRequest.getOrderId());
 
-        CashAccountData cashAccountData = order.getCashAccountData();
-        cashAccountData.setCashAccount(orderEnrichRequest.getCashAccount());
-        cashAccountData.setCurrency(orderEnrichRequest.getCashAccountCurrency());
+        try {
+            Order order = orderRepository.findById(orderEnrichRequest.getOrderId(), false, false);
+            if (order == null) {
+                log.error("未找到要 enrichment 的订单, orderId={}", orderEnrichRequest.getOrderId());
+                throw new RuntimeException("Order not found for enrichment: " + orderEnrichRequest.getOrderId());
+            }
+            log.debug("找到订单, orderId={}, 当前状态={}", order.getOrderId(), order.getOrderState());
 
-        ISINData isinData = order.getIsinData();
-        isinData.setIsinType(orderEnrichRequest.getIsinType());
-        isinData.setIsinName(orderEnrichRequest.getIsinName());
+            // 更新现金账户数据
+            CashAccountData cashAccountData = order.getCashAccountData();
+            cashAccountData.setCashAccount(orderEnrichRequest.getCashAccount());
+            cashAccountData.setCurrency(orderEnrichRequest.getCashAccountCurrency());
+            log.debug("现金账户数据已更新, orderId={}, cashAccount={}",
+                    order.getOrderId(), orderEnrichRequest.getCashAccount());
 
-        CommissionData commissionData = order.getCommissionData();
-        commissionData.setCommissionRate(orderEnrichRequest.getCommissionRate());
-        commissionData.setCommissionType(orderEnrichRequest.getCommissionType());
-        order.calculateCommission();
+            // 更新ISIN数据
+            ISINData isinData = order.getIsinData();
+            isinData.setIsinType(orderEnrichRequest.getIsinType());
+            isinData.setIsinName(orderEnrichRequest.getIsinName());
+            log.debug("ISIN数据已更新, orderId={}, isinType={}",
+                    order.getOrderId(), orderEnrichRequest.getIsinType());
 
-        order.enrich();
+            // 更新佣金数据并重新计算
+            CommissionData commissionData = order.getCommissionData();
+            commissionData.setCommissionRate(orderEnrichRequest.getCommissionRate());
+            commissionData.setCommissionType(orderEnrichRequest.getCommissionType());
+            order.calculateCommission();
+            log.debug("佣金数据已更新并重新计算, orderId={}, commissionRate={}",
+                    order.getOrderId(), orderEnrichRequest.getCommissionRate());
 
-        orderRepository.save(order);
+            order.enrich();
+            log.info("订单 enrichment 状态更新完成, orderId={}", order.getOrderId());
 
-        OrderEnrichedEvent orderEnrichedEvent = order.createOrderEnrichedEvent();
-        messageSender.send(orderEnrichedEvent);
+            orderRepository.save(order);
+            log.debug("订单数据已保存, orderId={}", order.getOrderId());
+
+            OrderEnrichedEvent orderEnrichedEvent = order.createOrderEnrichedEvent();
+            messageSender.send(orderEnrichedEvent);
+            log.info("订单 enrichment 事件已发送, orderId={}", order.getOrderId());
+
+        } catch (Exception e) {
+            log.error("enrichment 订单失败, orderId={}, 错误信息: {}",
+                    orderEnrichRequest.getOrderId(), e.getMessage(), e);
+            throw e;
+        }
     }
 
     public void amendOrder(OrderAmendRequest orderAmendRequest) {
-        Order order = orderRepository.findById(orderAmendRequest.getOrderId(), false, false);
+        log.info("开始修改订单, orderId={}", orderAmendRequest.getOrderId());
 
-        AccountData accountData = order.getAccountData();
-        accountData.setAccountKey(orderAmendRequest.getAccountKey());
-        accountData.setAccountName(orderAmendRequest.getAccountName());
+        try {
+            Order order = orderRepository.findById(orderAmendRequest.getOrderId(), false, false);
+            if (order == null) {
+                log.error("未找到要修改的订单, orderId={}", orderAmendRequest.getOrderId());
+                throw new RuntimeException("Order not found for amendment: " + orderAmendRequest.getOrderId());
+            }
+            log.debug("找到订单, orderId={}, 当前状态={}", order.getOrderId(), order.getOrderState());
 
-        MemberData memberData = order.getMemberData();
-        memberData.setMemberKey(orderAmendRequest.getMemberKey());
-        memberData.setMemberName(orderAmendRequest.getMemberName());
+            // 更新账户数据
+            AccountData accountData = order.getAccountData();
+            accountData.setAccountKey(orderAmendRequest.getAccountKey());
+            accountData.setAccountName(orderAmendRequest.getAccountName());
+            log.debug("账户数据已更新, orderId={}, accountKey={}",
+                    order.getOrderId(), orderAmendRequest.getAccountKey());
 
-        CashAccountData cashAccountData = order.getCashAccountData();
-        cashAccountData.setCashAccount(orderAmendRequest.getCashAccount());
-        cashAccountData.setCurrency(orderAmendRequest.getCashAccountCurrency());
+            // 更新成员数据
+            MemberData memberData = order.getMemberData();
+            memberData.setMemberKey(orderAmendRequest.getMemberKey());
+            memberData.setMemberName(orderAmendRequest.getMemberName());
+            log.debug("成员数据已更新, orderId={}, memberKey={}",
+                    order.getOrderId(), orderAmendRequest.getMemberKey());
 
-        ISINData isinData = order.getIsinData();
-        isinData.setIsinType(orderAmendRequest.getIsinType());
+            // 更新现金账户数据
+            CashAccountData cashAccountData = order.getCashAccountData();
+            cashAccountData.setCashAccount(orderAmendRequest.getCashAccount());
+            cashAccountData.setCurrency(orderAmendRequest.getCashAccountCurrency());
+            log.debug("现金账户数据已更新, orderId={}, cashAccount={}",
+                    order.getOrderId(), orderAmendRequest.getCashAccount());
 
-        CommissionData commissionData = order.getCommissionData();
-        commissionData.setCommissionRate(orderAmendRequest.getCommissionRate());
-        commissionData.setCommissionType(orderAmendRequest.getCommissionType());
-        order.calculateCommission();
+            // 更新ISIN数据
+            ISINData isinData = order.getIsinData();
+            isinData.setIsinType(orderAmendRequest.getIsinType());
+            log.debug("ISIN数据已更新, orderId={}, isinType={}",
+                    order.getOrderId(), orderAmendRequest.getIsinType());
 
-        order.amend();
+            // 更新佣金数据并重新计算
+            CommissionData commissionData = order.getCommissionData();
+            commissionData.setCommissionRate(orderAmendRequest.getCommissionRate());
+            commissionData.setCommissionType(orderAmendRequest.getCommissionType());
+            order.calculateCommission();
+            log.debug("佣金数据已更新并重新计算, orderId={}, commissionRate={}",
+                    order.getOrderId(), orderAmendRequest.getCommissionRate());
 
-        orderRepository.save(order);
+            order.amend();
+            log.info("订单修改状态更新完成, orderId={}", order.getOrderId());
 
-        OrderAmendedEvent orderAmendedEvent = order.createOrderAmendedEvent();
-        messageSender.send(orderAmendedEvent);
+            orderRepository.save(order);
+            log.debug("订单数据已保存, orderId={}", order.getOrderId());
+
+            OrderAmendedEvent orderAmendedEvent = order.createOrderAmendedEvent();
+            messageSender.send(orderAmendedEvent);
+            log.info("订单修改事件已发送, orderId={}", order.getOrderId());
+
+        } catch (Exception e) {
+            log.error("修改订单失败, orderId={}, 错误信息: {}",
+                    orderAmendRequest.getOrderId(), e.getMessage(), e);
+            throw e;
+        }
     }
 
     public void approveOrder(OrderApproveRequest orderApproveRequest) {
-        Order order = orderRepository.findById(orderApproveRequest.getOrderId(), false, false);
+        log.info("开始审批订单, orderId={}", orderApproveRequest.getOrderId());
 
-        order.approve();
+        try {
+            Order order = orderRepository.findById(orderApproveRequest.getOrderId(), false, false);
+            if (order == null) {
+                log.error("未找到要审批的订单, orderId={}", orderApproveRequest.getOrderId());
+                throw new RuntimeException("Order not found for approval: " + orderApproveRequest.getOrderId());
+            }
+            log.debug("找到订单, orderId={}, 当前状态={}", order.getOrderId(), order.getOrderState());
 
-        orderRepository.save(order);
+            order.approve();
+            log.info("订单审批状态更新完成, orderId={}", order.getOrderId());
 
-        emailService.orderApproved(order);
+            orderRepository.save(order);
+            log.debug("订单数据已保存, orderId={}", order.getOrderId());
+
+            emailService.orderApproved(order);
+            log.info("订单审批邮件已发送, orderId={}", order.getOrderId());
+
+        } catch (Exception e) {
+            log.error("审批订单失败, orderId={}, 错误信息: {}",
+                    orderApproveRequest.getOrderId(), e.getMessage(), e);
+            throw e;
+        }
     }
 
     public Order getOrder(Long orderId) {
-        return orderRepository.findById(orderId, true, true);
+        log.debug("查询订单详情, orderId={}, withRelations=true", orderId);
+        Order order = orderRepository.findById(orderId, true, true);
+        if (order == null) {
+            log.warn("未找到订单, orderId={}", orderId);
+        } else {
+            log.debug("订单查询完成, orderId={}, status={}", order.getOrderId(), order.getOrderState());
+        }
+        return order;
     }
 
     public void orderExecuted(ExecutionMessage executionMessage) {
-        if (executionMessage.getTradeLinkId() != null) {
-            //live order
-            Order order = orderRepository.findById(executionMessage.getTradeLinkId(), false, true);
+        log.info("开始处理订单执行消息, tradeLinkId={}, executionId={}",
+                executionMessage.getTradeLinkId(), executionMessage.getTps2ExecutionId());
 
-            List<ExecutionRecord> executionRecordList = order.getExecutionRecordList();
-            if (CollectionUtils.isEmpty(executionRecordList)) {
-                executionRecordList = new ArrayList<>();
-                order.setExecutionRecordList(executionRecordList);
+        try {
+            if (executionMessage.getTradeLinkId() != null) {
+                log.info("处理LIVE订单执行, tradeLinkId={}", executionMessage.getTradeLinkId());
+                //live order
+                Order order = orderRepository.findById(executionMessage.getTradeLinkId(), false, true);
+                if (order == null) {
+                    log.error("未找到对应的LIVE订单, tradeLinkId={}", executionMessage.getTradeLinkId());
+                    throw new RuntimeException("Live order not found for tradeLinkId: " + executionMessage.getTradeLinkId());
+                }
+                log.debug("找到LIVE订单, orderId={}, 当前状态={}", order.getOrderId(), order.getOrderState());
+
+                List<ExecutionRecord> executionRecordList = order.getExecutionRecordList();
+                if (CollectionUtils.isEmpty(executionRecordList)) {
+                    executionRecordList = new ArrayList<>();
+                    order.setExecutionRecordList(executionRecordList);
+                    log.debug("初始化执行记录列表, orderId={}", order.getOrderId());
+                }
+                ExecutionRecord executionRecord = executionMessage.createExecutionRecord();
+                executionRecordList.add(executionRecord);
+                log.debug("添加执行记录, orderId={}, executionId={}",
+                        order.getOrderId(), executionMessage.getTps2ExecutionId());
+
+                order.executed();
+                log.info("LIVE订单执行状态更新完成, orderId={}", order.getOrderId());
+
+                orderRepository.save(order);
+                log.debug("LIVE订单数据已保存, orderId={}", order.getOrderId());
+
+                emailService.orderExecuted(order);
+                log.info("LIVE订单执行邮件已发送, orderId={}", order.getOrderId());
+
+            } else {
+                log.info("创建电话订单, executionId={}", executionMessage.getTps2ExecutionId());
+                //create phone order
+                Order order = executionMessage.createPhoneOrder();
+                log.debug("电话订单创建完成, orderId={}", order.getOrderId());
+
+                order.initForPhone();
+                log.debug("电话订单初始化完成, orderId={}", order.getOrderId());
+
+                orderRepository.save(order);
+                log.debug("电话订单数据已保存, orderId={}", order.getOrderId());
+
+                emailService.orderEnrich(order);
+                log.info("电话订单 enrichment 邮件已发送, orderId={}", order.getOrderId());
             }
-            ExecutionRecord executionRecord = executionMessage.createExecutionRecord();
-            executionRecordList.add(executionRecord);
 
-            order.executed();
+            log.info("订单执行消息处理完成");
 
-            orderRepository.save(order);
-
-            emailService.orderExecuted(order);
-        } else {
-            //create phone order
-            Order order = executionMessage.createPhoneOrder();
-
-            order.initForPhone();
-
-            orderRepository.save(order);
-
-            emailService.orderEnrich(order);
+        } catch (Exception e) {
+            log.error("处理订单执行消息失败, tradeLinkId={}, executionId={}, 错误信息: {}",
+                    executionMessage.getTradeLinkId(), executionMessage.getTps2ExecutionId(), e.getMessage(), e);
+            throw e;
         }
-
     }
 }

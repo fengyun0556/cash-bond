@@ -1,5 +1,6 @@
 package com.cpb.tradelink.infrastructure.message.consumer;
 
+import com.alibaba.fastjson2.JSONObject;
 import com.cpb.tradelink.domain.event.SettlementFailedMessage;
 import com.cpb.tradelink.domain.service.OrderService;
 import lombok.extern.slf4j.Slf4j;
@@ -18,6 +19,8 @@ public class SettlementFailedConsumerListener implements RocketMQListener<Settle
 
     @Override
     public void onMessage(SettlementFailedMessage settlementFailedMessage) {
+        log.info("结算失败 收到消息: {}", JSONObject.toJSONString(settlementFailedMessage));
         orderService.settlementFailed(settlementFailedMessage.getOrderId());
+        log.info("结算失败 end, trade link id: {}", settlementFailedMessage.getOrderId());
     }
 }

@@ -1,5 +1,6 @@
 package com.cpb.oms.interfaces.settlement;
 
+import com.alibaba.fastjson2.JSONObject;
 import com.cpb.oms.application.service.SettlementApplicationService;
 import com.cpb.oms.domain.model.settlement.SettlementInteract;
 import lombok.extern.slf4j.Slf4j;
@@ -29,13 +30,17 @@ public class SettlementController {
 
     @PostMapping("sendToBanker")
     public ResponseEntity<Boolean> sendToBanker(@RequestBody SendToBankerRequest sendToBankerRequest) {
+        log.info("send To Banker, {}", JSONObject.toJSONString(sendToBankerRequest));
         settlementApplicationService.sendToBanker(sendToBankerRequest);
+        log.info("send To Banker 结束");
         return ResponseEntity.ok(true);
     }
 
     @PostMapping("trigger")
     public ResponseEntity<Boolean> trigger(@RequestBody SettlementTriggerRequest settlementTriggerRequest) {
+        log.info("trigger, {}", JSONObject.toJSONString(settlementTriggerRequest));
         Boolean success = settlementApplicationService.trigger(settlementTriggerRequest);
+        log.info("trigger 结束, {}", success);
         return ResponseEntity.ok(success);
     }
 }
