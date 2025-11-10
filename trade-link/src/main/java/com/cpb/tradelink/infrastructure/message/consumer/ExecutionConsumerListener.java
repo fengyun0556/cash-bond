@@ -19,9 +19,9 @@ public class ExecutionConsumerListener implements RocketMQListener<ExecutionMess
 
     @Override
     public void onMessage(ExecutionMessage executionMessage) {
-        log.info("bbg execution 收到消息: {}", JSONObject.toJSONString(executionMessage));
+        log.info("execution 收到消息: {}", JSONObject.toJSONString(executionMessage));
         orderLifecycleAppService.orderExecuted(executionMessage);
-        log.info("bbg execution end, trade link id: {}", executionMessage.getTradeLinkId());
+        log.info("execution end, trade link id: {}", executionMessage.getTradeLinkId());
     }
 
 }

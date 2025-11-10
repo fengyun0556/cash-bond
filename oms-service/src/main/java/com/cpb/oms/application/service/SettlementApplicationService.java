@@ -3,12 +3,15 @@ package com.cpb.oms.application.service;
 import com.cpb.oms.domain.event.OrderAmendedEvent;
 import com.cpb.oms.domain.event.OrderEnrichedEvent;
 import com.cpb.oms.domain.event.SettlementFailedEvent;
+import com.cpb.oms.domain.event.TradeExecutedEvent;
 import com.cpb.oms.domain.model.settlement.SettlementInteract;
 import com.cpb.oms.domain.model.settlement.SettlementResult;
 import com.cpb.oms.domain.repository.SettlementInteractRepository;
 import com.cpb.oms.domain.service.SettlementIntegrationService;
+import com.cpb.oms.domain.service.SettlementInteractService;
 import com.cpb.oms.interfaces.settlement.SendToBankerRequest;
 import com.cpb.oms.interfaces.settlement.SettlementTriggerRequest;
+import io.micrometer.common.util.StringUtils;
 import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,6 +26,8 @@ public class SettlementApplicationService {
     private SettlementInteractRepository settlementInteractRepository;
     @Autowired
     private SettlementIntegrationService settlementIntegrationService;
+    @Autowired
+    private SettlementInteractService settlementInteractService;
     @Autowired
     private MessageSender messageSender;
 
@@ -166,6 +171,40 @@ public class SettlementApplicationService {
             log.error("调用结算服务失败，settlementInteractId={}, 错误信息: {}",
                     settlementInteract.getId(), e.getMessage(), e);
             throw e;
+        }
+    }
+
+    public void orderExecuted(TradeExecutedEvent tradeExecutedEvent) {
+        //构建结算交互记录
+        SettlementInteract settlementInteract = settlementInteractService.buildSettlementInteract(tradeExecutedEvent);
+        settlementInteract.init();
+        log.info("结算交互记录初始化完成, SettlementInteractId: {}", settlementInteract.getId());
+
+        //保存到数据库
+        settlementInteractRepository.save(settlementInteract);
+        log.info("结算交互记录保存完成, SettlementInteractId: {}, Tps2ExecutionId: {}",
+                settlementInteract.getId(), settlementInteract.getTps2ExecutionId());
+
+        if (StringUtils.isNotEmpty(settlementInteract.getCashAccount())) {
+            log.info("处理LIVE订单结算, Tps2ExecutionId: {}, CashAccount: {}",
+                    tradeExecutedEvent.getTps2ExecutionId(), settlementInteract.getCashAccount());
+
+            //调用结算服务
+            log.info("开始调用结算服务, SettlementInteractId: {}", settlementInteract.getId());
+            SettlementResult settlementResult = settlementIntegrationService.settlement(settlementInteract);
+            log.info("结算服务调用完成, SettlementInteractId: {}, Success: {}, Message: {}",
+                    settlementInteract.getId(), settlementResult.getSuccess(), settlementResult.getFailedReason());
+
+            //保存结算结果
+            settlementInteract.saveSettlementResult(settlementResult);
+            log.info("结算结果已保存到交互记录, SettlementInteractId: {}", settlementInteract.getId());
+
+            //更新数据库
+            settlementInteractRepository.save(settlementInteract);
+            log.info("结算交互记录更新完成, SettlementInteractId: {}", settlementInteract.getId());
+
+        } else {
+            log.info("处理PHONE订单, 跳过结算流程, Tps2ExecutionId: {}", tradeExecutedEvent.getTps2ExecutionId());
         }
     }
 }

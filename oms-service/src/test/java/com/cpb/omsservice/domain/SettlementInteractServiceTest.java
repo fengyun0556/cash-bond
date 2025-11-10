@@ -86,7 +86,7 @@ class SettlementInteractServiceTest {
     void buildSettlementInteract_WithNullBBGExecution_ShouldThrowNullPointerException() {
         // Act & Assert
         assertThrows(NullPointerException.class, () -> {
-            settlementInteractService.buildSettlementInteract(null);
+            settlementInteractService.buildSettlementInteract((BBGExecution) null);
         });
     }
 

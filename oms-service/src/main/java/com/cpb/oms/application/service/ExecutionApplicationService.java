@@ -79,40 +79,7 @@ public class ExecutionApplicationService {
             messageSender.send(tradeExecutedEvent);
             log.info("交易执行事件已发送, Tps2ExecutionId: {}", executionConfirmedRequest.getTps2ExecutionId());
 
-            if (StringUtils.isNotEmpty(bbgExecution.getCashAccount())) {
-                log.info("处理LIVE订单结算, Tps2ExecutionId: {}, CashAccount: {}",
-                        executionConfirmedRequest.getTps2ExecutionId(), bbgExecution.getCashAccount());
-
-                //构建结算交互记录
-                SettlementInteract settlementInteract = settlementInteractService.buildSettlementInteract(bbgExecution);
-                settlementInteract.init();
-                log.info("结算交互记录初始化完成, SettlementInteractId: {}", settlementInteract.getId());
-
-                //保存到数据库
-                settlementInteractRepository.save(settlementInteract);
-                log.info("结算交互记录保存完成, SettlementInteractId: {}, Tps2ExecutionId: {}",
-                        settlementInteract.getId(), settlementInteract.getTps2ExecutionId());
-
-                //调用结算服务
-                log.info("开始调用结算服务, SettlementInteractId: {}", settlementInteract.getId());
-                SettlementResult settlementResult = settlementIntegrationService.settlement(settlementInteract);
-                log.info("结算服务调用完成, SettlementInteractId: {}, Success: {}, Message: {}",
-                        settlementInteract.getId(), settlementResult.getSuccess(), settlementResult.getFailedReason());
-
-                //保存结算结果
-                settlementInteract.saveSettlementResult(settlementResult);
-                log.info("结算结果已保存到交互记录, SettlementInteractId: {}", settlementInteract.getId());
-
-                //更新数据库
-                settlementInteractRepository.save(settlementInteract);
-                log.info("结算交互记录更新完成, SettlementInteractId: {}", settlementInteract.getId());
-
-            } else {
-                log.info("处理PHONE订单, 跳过结算流程, Tps2ExecutionId: {}", executionConfirmedRequest.getTps2ExecutionId());
-            }
-
             log.info("执行确认流程完成, Tps2ExecutionId: {}", executionConfirmedRequest.getTps2ExecutionId());
-
         } catch (Exception e) {
             log.error("执行确认流程失败, Tps2ExecutionId: {}, 错误信息: {}",
                     executionConfirmedRequest.getTps2ExecutionId(), e.getMessage(), e);
