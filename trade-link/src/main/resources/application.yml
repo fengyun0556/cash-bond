@@ -10,4 +10,5 @@ spring:
   application:
     name: trade-link
   datasource:
-    driver-class-name: com.mysql.jdbc.Driver
+    driver-class-name: org.postgresql.Driver
+#    driver-class-name: com.mysql.jdbc.Driver

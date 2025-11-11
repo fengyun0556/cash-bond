@@ -1,9 +1,9 @@
 spring:
   datasource:
-    url: jdbc:postgresql://192.168.5.19:5432/trade-link
+    url: jdbc:postgresql://192.168.71.43:5432/trade-link
     username: postgres
     password: postgres_Password
 rocketmq:
-  name-server: 192.168.5.19:9876
+  name-server: 192.168.71.43:9876
 oms:
   host: http://localhost:8083

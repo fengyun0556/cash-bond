@@ -19,7 +19,7 @@ spec:
       initContainers:
       - name: wait-for-mysql
         image: busybox
-        command: ['sh', '-c', 'until nc -z mysql-service 3306; do echo "Waiting for MySQL..."; sleep 2; done;']
+        command: ['sh', '-c', 'until nc -z postgres-service 5432; do echo "Waiting for MySQL..."; sleep 2; done;']
       - name: wait-for-rocketmq-nameserver
         image: busybox
         command: ['sh', '-c', 'until nc -z rocketmq-nameserver 9876; do echo "Waiting for RocketMQ NameServer..."; sleep 2; done;']
@@ -59,8 +59,8 @@ spec:
         - name: SPRING_DATASOURCE_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: mysql-secret
-              key: mysql-password
+              name: postgres-secret
+              key: postgres-password
         # 以下资源配置可以根据需要添加或删除
         resources:
           requests:

@@ -1,0 +1,210 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-config
+data:
+  init.sql: |
+    CREATE DATABASE "trade-link";
+    CREATE DATABASE "tps2";
+
+    GRANT ALL PRIVILEGES ON DATABASE "trade-link" TO postgres;
+    GRANT ALL PRIVILEGES ON DATABASE tps2 TO postgres;
+
+    \c trade-link
+
+    CREATE TABLE ORDER_DETAIL (
+        ORDER_ID BIGSERIAL PRIMARY KEY,
+        ACCOUNT_KEY VARCHAR(50),
+        ACCOUNT_NAME VARCHAR(100),
+        MEMBER_KEY VARCHAR(50),
+        MEMBER_NAME VARCHAR(100),
+        CASH_ACCOUNT VARCHAR(50),
+        CASH_ACCOUNT_CURRENCY VARCHAR(10),
+        ISIN VARCHAR(12),
+        ISIN_NAME VARCHAR(100),
+        ISIN_TYPE VARCHAR(10),
+        EXCHANGE_CODE VARCHAR(10),
+        ORDER_TYPE VARCHAR(20),
+        QUANTITY INTEGER NOT NULL,
+        TOTAL_EXECUTED_QUANTITY INTEGER,
+        PRICE NUMERIC(20,4),
+        COMMISSION_RATE NUMERIC(20,4),
+        COMMISSION_TYPE VARCHAR(20),
+        COMMISSION_PRICE NUMERIC(20,4),
+        ORDER_REQUEST_MODE VARCHAR(20),
+        TPS2_ID BIGINT,
+        ORDER_STATE VARCHAR(255),
+        EXECUTION_STATE VARCHAR(255),
+        IS_ENRICHED BOOLEAN,
+        IS_AMENDED BOOLEAN,
+        CREATE_TIME TIMESTAMP,
+        UPDATE_TIME TIMESTAMP
+    );
+
+    CREATE TABLE RULE_CHECK_DETAIL (
+        ID BIGSERIAL PRIMARY KEY,
+        RULE_CODE VARCHAR(50) NOT NULL,
+        ORDER_ID BIGINT NOT NULL,
+        RULE_CHECK_RESULT VARCHAR(20) NOT NULL,
+        RULE_DESCRIBE VARCHAR(500),
+        CREATE_TIME TIMESTAMP,
+        UPDATE_TIME TIMESTAMP
+    );
+
+    CREATE TABLE ORDER_EXECUTION_DETAIL (
+        EXECUTION_ID BIGSERIAL PRIMARY KEY,
+        TPS2_EXECUTION_ID BIGINT,
+        ORDER_ID BIGINT NOT NULL,
+        EXECUTED_QUANTITY INTEGER,
+        EXECUTED_PRICE NUMERIC(20,4),
+        CREATE_TIME TIMESTAMP,
+        UPDATE_TIME TIMESTAMP
+    );
+
+
+    \c tps2
+    CREATE TABLE TPS2_ORDER_DETAIL (
+        TPS2_ID BIGSERIAL PRIMARY KEY,
+        TRADE_LINK_ID BIGINT,
+        ACCOUNT_KEY VARCHAR(50),
+        ACCOUNT_NAME VARCHAR(100),
+        MEMBER_KEY VARCHAR(50),
+        MEMBER_NAME VARCHAR(100),
+        CASH_ACCOUNT VARCHAR(50),
+        ISIN VARCHAR(12),
+        ISIN_NAME VARCHAR(100),
+        TRADE_STATE VARCHAR(255),
+        EXCHANGE_CODE VARCHAR(10),
+        ORDER_TYPE VARCHAR(20),
+        QUANTITY INTEGER NOT NULL,
+        PRICE NUMERIC(20,4),
+        CREATE_TIME TIMESTAMP,
+        UPDATE_TIME TIMESTAMP
+    );
+
+
+    CREATE TABLE TPS2_EXECUTION_DETAIL (
+        TPS2_EXECUTION_ID BIGSERIAL PRIMARY KEY,
+        BBG_MESSAGE_ID VARCHAR(255),
+        TRADE_LINK_ID BIGINT,
+        ACCOUNT_KEY VARCHAR(255),
+        EXECUTED_QUANTITY INTEGER,
+        EXECUTED_PRICE NUMERIC(20,4),
+        CONFIRMED BOOLEAN,
+        CONFIRMED_DATETIME TIMESTAMP,
+        CREATE_TIME TIMESTAMP,
+        UPDATE_TIME TIMESTAMP
+    );
+
+    CREATE TABLE SETTLEMENT_INTERACT_DETAIL (
+        ID BIGSERIAL PRIMARY KEY,
+        TPS2_EXECUTION_ID BIGINT,
+        ACCOUNT_KEY VARCHAR(50),
+        ACCOUNT_NAME VARCHAR(100),
+        MEMBER_KEY VARCHAR(50),
+        MEMBER_NAME VARCHAR(100),
+        CASH_ACCOUNT VARCHAR(50),
+        ISIN VARCHAR(12),
+        EXECUTED_QUANTITY INTEGER,
+        EXECUTED_PRICE NUMERIC(20,4),
+        SETTLEMENT_ID BIGINT,
+        SETTLEMENT_STATE VARCHAR(20),
+        FAILED_REASON TEXT,
+        CREATE_TIME TIMESTAMP,
+        UPDATE_TIME TIMESTAMP
+    );
+
+
+---
+# 添加 PersistentVolume
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: postgres-pv
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-storage
+  hostPath:
+    path: /data/postgres-data
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: local-storage
+  volumeName: postgres-pv
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+      containers:
+      - name: postgres
+        image: postgres:17.6
+        env:
+        - name: POSTGRES_USER
+          value: admin
+        - name: POSTGRES_PASSWORD
+          value: password123
+        - name: POSTGRES_DB
+          value: postgres
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        - name: init-script
+          mountPath: /docker-entrypoint-initdb.d/
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+      - name: init-script
+        configMap:
+          name: postgres-init-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+spec:
+  selector:
+    app: postgres
+  ports:
+    - protocol: TCP
+      port: 5432
+      targetPort: 5432
+  type: ClusterIP

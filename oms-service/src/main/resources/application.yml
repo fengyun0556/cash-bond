@@ -12,4 +12,5 @@ spring:
   application:
     name: oms-service
   datasource:
-    driver-class-name: com.mysql.jdbc.Driver #org.postgresql.Driver
+    driver-class-name: org.postgresql.Driver
+#    driver-class-name: com.mysql.jdbc.Driver

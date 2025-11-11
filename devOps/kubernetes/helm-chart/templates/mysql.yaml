@@ -1,0 +1,225 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-init-config
+data:
+  init.sql: |
+    CREATE DATABASE IF NOT EXISTS `trade-link` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    CREATE DATABASE IF NOT EXISTS `tps2` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+    -- 创建用户并授权（MySQL中需要先创建用户再授权）
+    CREATE USER IF NOT EXISTS 'admin'@'%' IDENTIFIED BY 'password123';
+    GRANT ALL PRIVILEGES ON `trade-link`.* TO 'admin'@'%';
+    GRANT ALL PRIVILEGES ON `tps2`.* TO 'admin'@'%';
+    FLUSH PRIVILEGES;
+
+    -- 使用 trade-link 数据库
+    USE `trade-link`;
+
+    CREATE TABLE ORDER_DETAIL (
+        ORDER_ID BIGINT AUTO_INCREMENT PRIMARY KEY,
+        ACCOUNT_KEY VARCHAR(50),
+        ACCOUNT_NAME VARCHAR(100),
+        MEMBER_KEY VARCHAR(50),
+        MEMBER_NAME VARCHAR(100),
+        CASH_ACCOUNT VARCHAR(50),
+        CASH_ACCOUNT_CURRENCY VARCHAR(10),
+        ISIN VARCHAR(12),
+        ISIN_NAME VARCHAR(100),
+        ISIN_TYPE VARCHAR(10),
+        EXCHANGE_CODE VARCHAR(10),
+        ORDER_TYPE VARCHAR(20),
+        QUANTITY INT NOT NULL,
+        TOTAL_EXECUTED_QUANTITY INT,
+        PRICE DECIMAL(20,4),
+        COMMISSION_RATE DECIMAL(20,4),
+        COMMISSION_TYPE VARCHAR(20),
+        COMMISSION_PRICE DECIMAL(20,4),
+        ORDER_REQUEST_MODE VARCHAR(20),
+        TPS2_ID BIGINT,
+        ORDER_STATE VARCHAR(255),
+        EXECUTION_STATE VARCHAR(255),
+        IS_ENRICHED TINYINT(1),
+        IS_AMENDED TINYINT(1),
+        CREATE_TIME DATETIME,
+        UPDATE_TIME DATETIME
+    );
+
+    CREATE TABLE RULE_CHECK_DETAIL (
+        ID BIGINT AUTO_INCREMENT PRIMARY KEY,
+        RULE_CODE VARCHAR(50) NOT NULL,
+        ORDER_ID BIGINT NOT NULL,
+        RULE_CHECK_RESULT VARCHAR(20) NOT NULL,
+        RULE_DESCRIBE VARCHAR(500),
+        CREATE_TIME DATETIME,
+        UPDATE_TIME DATETIME
+    );
+
+    CREATE TABLE ORDER_EXECUTION_DETAIL (
+        EXECUTION_ID BIGINT AUTO_INCREMENT PRIMARY KEY,
+        TPS2_EXECUTION_ID BIGINT,
+        ORDER_ID BIGINT NOT NULL,
+        EXECUTED_QUANTITY INT,
+        EXECUTED_PRICE DECIMAL(20,4),
+        CREATE_TIME DATETIME,
+        UPDATE_TIME DATETIME
+    );
+
+    -- 使用 tps2 数据库
+    USE `tps2`;
+
+    CREATE TABLE TPS2_ORDER_DETAIL (
+        TPS2_ID BIGINT AUTO_INCREMENT PRIMARY KEY,
+        TRADE_LINK_ID BIGINT,
+        ACCOUNT_KEY VARCHAR(50),
+        ACCOUNT_NAME VARCHAR(100),
+        MEMBER_KEY VARCHAR(50),
+        MEMBER_NAME VARCHAR(100),
+        CASH_ACCOUNT VARCHAR(50),
+        ISIN VARCHAR(12),
+        ISIN_NAME VARCHAR(100),
+        TRADE_STATE VARCHAR(255),
+        EXCHANGE_CODE VARCHAR(10),
+        ORDER_TYPE VARCHAR(20),
+        QUANTITY INT NOT NULL,
+        PRICE DECIMAL(20,4),
+        CREATE_TIME DATETIME,
+        UPDATE_TIME DATETIME
+    );
+
+
+    CREATE TABLE TPS2_EXECUTION_DETAIL (
+        TPS2_EXECUTION_ID BIGINT AUTO_INCREMENT PRIMARY KEY,
+        BBG_MESSAGE_ID VARCHAR(255),
+        TRADE_LINK_ID BIGINT,
+        ACCOUNT_KEY VARCHAR(255),
+        EXECUTED_QUANTITY INT,
+        EXECUTED_PRICE DECIMAL(20,4),
+        CONFIRMED TINYINT(1),
+        CONFIRMED_DATETIME DATETIME,
+        CREATE_TIME DATETIME,
+        UPDATE_TIME DATETIME
+    );
+
+    CREATE TABLE SETTLEMENT_INTERACT_DETAIL (
+        ID BIGINT AUTO_INCREMENT PRIMARY KEY,
+        TPS2_EXECUTION_ID BIGINT,
+        ACCOUNT_KEY VARCHAR(50),
+        ACCOUNT_NAME VARCHAR(100),
+        MEMBER_KEY VARCHAR(50),
+        MEMBER_NAME VARCHAR(100),
+        CASH_ACCOUNT VARCHAR(50),
+        ISIN VARCHAR(12),
+        EXECUTED_QUANTITY INT,
+        EXECUTED_PRICE DECIMAL(20,4),
+        SETTLEMENT_ID BIGINT,
+        SETTLEMENT_STATE VARCHAR(20),
+        FAILED_REASON TEXT,
+        CREATE_TIME DATETIME,
+        UPDATE_TIME DATETIME
+    );
+
+
+---
+# 添加 PersistentVolume
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mysql-pv
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-storage
+  hostPath:
+    path: /data/mysql-data
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: local-storage
+  volumeName: mysql-pv
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+spec:
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+      containers:
+      - name: mysql
+        image: mysql:5.7
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: mysql-root-password
+        - name: MYSQL_USER
+          value: admin
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: mysql-password
+        ports:
+        - containerPort: 3306
+        volumeMounts:
+        - name: mysql-storage
+          mountPath: /var/lib/mysql
+        - name: init-script
+          mountPath: /docker-entrypoint-initdb.d/
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        args:
+        - --character-set-server=utf8mb4
+        - --collation-server=utf8mb4_unicode_ci
+        - --innodb_buffer_pool_size=256M
+      volumes:
+      - name: mysql-storage
+        persistentVolumeClaim:
+          claimName: mysql-pvc
+      - name: init-script
+        configMap:
+          name: mysql-init-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-service
+spec:
+  selector:
+    app: mysql
+  ports:
+    - protocol: TCP
+      port: 3306
+      targetPort: 3306
+  type: ClusterIP
