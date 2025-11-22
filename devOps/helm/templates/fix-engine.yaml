@@ -1,16 +1,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: fix-engine  # Deployment 的名称
+  name: fix-engine
 spec:
-  replicas: 1  # 初始副本数量，根据需要修改
+  replicas: 1
   selector:
     matchLabels:
-      app: fix-engine  # 这个标签必须和下面的 template.metadata.labels 匹配
+      app: fix-engine
   template:
     metadata:
       labels:
-        app: fix-engine  # Pod 的标签，Service 会根据这个来选择 Pod
+        app: fix-engine
     spec:
       tolerations:
         - key: "node-role.kubernetes.io/control-plane"
@@ -21,10 +21,10 @@ spec:
         image: busybox
         command: ['sh', '-c', 'until nc -z rocketmq-nameserver 9876; do echo "Waiting for RocketMQ NameServer..."; sleep 2; done;']
       containers:
-      - name: fix-engine  # 容器的名称
-        image: shenyun2025/fix-engine:{{ .Values.image.tag.fix_engine }}  # 你的 Docker Hub 镜像地址
+      - name: fix-engine
+        image: shenyun2025/fix-engine:{{ .Values.image.tag.fix_engine }}
         ports:
-        - containerPort: 8085  # 你的应用在容器内监听的端口号（根据你的实际情况修改！）
+        - containerPort: 8085
         - containerPort: 8086
         # 健康检查探针配置
         livenessProbe:
@@ -52,9 +52,8 @@ spec:
           periodSeconds: 5
           timeoutSeconds: 3
         env:
-        - name: SPRING_PROFILES_ACTIVE  # 设置环境变量
+        - name: SPRING_PROFILES_ACTIVE
           value: {{ .Values.env}}
-        # 以下资源配置可以根据需要添加或删除
         resources:
           requests:
             memory: "256Mi"
@@ -66,12 +65,12 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: fix-engine  # Service 的名称
+  name: fix-engine
 spec:
   selector:
-    app: fix-engine  # 这个标签必须和 Deployment 中的 Pod 标签匹配，用于寻找要代理的 Pod
+    app: fix-engine
   ports:
     - protocol: TCP
-      port: 80          # Service 对外暴露的端口
-      targetPort: 8085  # 请求转发到 Pod 的端口（必须与 Deployment 中的 containerPort 一致）
-  type: ClusterIP       # 默认类型，只能在集群内部访问
+      port: 80
+      targetPort: 8085
+  type: ClusterIP
